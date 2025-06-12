@@ -8,11 +8,10 @@
   ],
   "functions": {
     "app.js": {
-      "runtime": "nodejs22.16.0"
+      "runtime": "nodejs20.x"
     }
   },
   "build": {
-    "src": "app.js",
     "use": "@vercel/node"
   }
 }
