@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/app.js"
+    }
+  ],
+  "functions": {
+    "app.js": {
+      "runtime": "nodejs22.16.0"
+    }
+  },
+  "build": {
+    "src": "app.js",
+    "use": "@vercel/node"
+  }
+}
