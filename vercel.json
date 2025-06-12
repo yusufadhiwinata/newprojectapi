@@ -2,17 +2,8 @@
   "version": 2,
   "rewrites": [
     {
-      "source": "/(.*)", 
-      "destination": "/api/app.js" 
+      "source": "/(.*)",
+      "destination": "/app.js"
     }
-  ],
-  "functions": {
-    "api/app.js": { 
-      "runtime": "nodejs18.x"
-    }
-  },
-  "build": {
-    "src": "app.js", 
-    "use": "@vercel/node"
-  }
+  ]
 }
