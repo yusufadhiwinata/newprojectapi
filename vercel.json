@@ -3,16 +3,7 @@
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "/app.js"
+      "destination": "/api"
     }
-  ],
-  "functions": {
-    "app.js": {
-      "runtime": "nodejs22.16.0"
-    }
-  },
-  "build": {
-    "src": "app.js",
-    "use": "@vercel/node"
-  }
+  ]
 }
