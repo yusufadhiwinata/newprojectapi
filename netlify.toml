@@ -1,9 +1,7 @@
 # netlify.toml
 [build]
   command = "npm install"
-  publish = "." # UBAH INI ke root directory, atau biarkan kosong jika Netlify mengizinkan
-                # Atau bisa juga pakai folder yang pasti kosong, misal "public" atau "temp"
-                # Tapi "." adalah yang paling aman untuk proyek API murni tanpa frontend.
+  publish = "." # UBAH INI: Arahkan ke root directory proyek Anda.
 
 [functions]
   directory = "netlify/functions"
