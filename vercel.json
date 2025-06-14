@@ -10,8 +10,5 @@
     "app.js": {
       "runtime": "@vercel/node@20.x"
     }
-  },
-  "build": {
-    "use": "@vercel/node"
   }
 }
