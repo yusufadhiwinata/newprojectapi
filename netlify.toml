@@ -1,0 +1,20 @@
+# netlify.toml
+[build]
+  command = "npm install" # Perintah ini akan dijalankan Netlify untuk menginstal dependensi
+  publish = "build" # Folder yang akan di-publish. Untuk API murni, ini bisa kosong atau folder sementara.
+
+[functions]
+  directory = "netlify/functions" # Lokasi fungsi Netlify Anda
+  node_bundler = "esbuild" # Direkomendasikan untuk build yang lebih cepat dan efisien
+
+[[redirects]]
+  from = "/api/*" # Tangkap semua permintaan yang dimulai dengan /api/
+  to = "/.netlify/functions/api/:splat" # Arahkan ke fungsi api.js Anda
+  status = 200 # Kirim status 200 OK
+  force = true
+
+[[redirects]]
+  from = "/*" # Opsional: Redirect semua sisa permintaan (termasuk root /) ke fungsi API Anda
+  to = "/.netlify/functions/api/"
+  status = 200
+  force = true
