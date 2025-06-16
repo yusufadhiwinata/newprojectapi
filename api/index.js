@@ -51,9 +51,12 @@ app.get("/api/user/:username", async (req, res) => {
   });
 });
 
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log("Connected"))
-  .catch((err) => console.log("Error:", err.message));
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log("✅ Connected to MongoDB"))
+.catch(err => console.error("❌ MongoDB error:", err));
 
 
 module.exports = app;
