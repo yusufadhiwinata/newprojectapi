@@ -1,23 +1,8 @@
-# netlify.toml
 [build]
-  command = "npm install" # Perintah untuk menjalankan saat deploy
-  publish = "." # Folder publikasi (tidak terlalu relevan untuk fungsi)
-
-[functions]
-  directory = "netlify/functions" # Direktori tempat fungsi Anda berada
-  node_bundler = "esbuild" # Netlify akan menggunakan esbuild untuk bundling
-  # Timeout default adalah 10 detik. Anda bisa meningkatkannya untuk akun berbayar.
-  # timeout = 20 # Contoh untuk akun Pro/Business (maks 26s untuk Pro, 60s untuk Business)
+  functions = "netlify/functions"
+  command = "npm install"
 
 [[redirects]]
   from = "/api/*"
-  to = "/.netlify/functions/api/:splat" # Redirect semua request ke /api/ ke fungsi Anda
+  to = "/.netlify/functions/:splat"
   status = 200
-  force = true
-
-# Opsional: Jika Anda tidak memiliki frontend terpisah dan ingin fungsi menangani semua rute
-[[redirects]]
-  from = "/*"
-  to = "/.netlify/functions/api/"
-  status = 200
-  force = true
