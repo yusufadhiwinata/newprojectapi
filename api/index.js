@@ -51,5 +51,10 @@ app.get("/api/user/:username", async (req, res) => {
   });
 });
 
+mongoose.connect(process.env.MONGODB_URI)
+  .then(() => console.log("Connected"))
+  .catch((err) => console.log("Error:", err.message));
+
+
 module.exports = app;
 module.exports.handler = serverless(app);
