@@ -28,12 +28,28 @@ app.post("/api/register", async (req, res) => {
   res.json({ message: "User registered!" });
 });
 
-// Route login (sederhana, belum pakai JWT)
+// Route login
 app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email, password });
   if (!user) return res.status(401).json({ message: "Login failed" });
   res.json({ message: "Login success", user });
+});
+
+// ✅ Route get user by username
+app.get("/api/user/:username", async (req, res) => {
+  const { username } = req.params;
+  const user = await User.findOne({ username });
+
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  // Tidak kirim password untuk alasan keamanan
+  res.json({
+    username: user.username,
+    email: user.email
+  });
 });
 
 module.exports = app;
