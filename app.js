@@ -53,61 +53,48 @@ function authenticateToken(req, res, next) {
 
 // --- Endpoint Register (POST /register) ---
 app.post('/register', async (req, res) => {
-    const { username, email, password } = req.body;
-
-    if (!username || !email || !password) {
-        return res.status(400).json({ message: 'Semua field (username, email, password) harus diisi' });
-    }
+    // ... validasi input ...
 
     try {
-        // Cek apakah email atau username sudah terdaftar
-        const usersRef = db.collection('users'); // Firestore collection reference
+        console.time('Check Email and Username');
+        const usersRef = db.collection('users');
         const emailSnapshot = await usersRef.where('email', '==', email).get();
         if (!emailSnapshot.empty) {
+            console.timeEnd('Check Email and Username');
             return res.status(409).json({ message: 'Email sudah terdaftar' });
         }
         const usernameSnapshot = await usersRef.where('username', '==', username).get();
         if (!usernameSnapshot.empty) {
+            console.timeEnd('Check Email and Username');
             return res.status(409).json({ message: 'Username sudah terdaftar' });
         }
+        console.timeEnd('Check Email and Username'); // Akan menunjukkan waktu total untuk kedua query
 
-        // Hashing password
+        console.time('Hashing Password');
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
+        console.timeEnd('Hashing Password');
 
-        // Buat user baru di Firestore
-        const newUserRef = await usersRef.add({ // .add() akan membuat ID dokumen otomatis
+        console.time('Add User to Firestore');
+        const newUserRef = await usersRef.add({
             username: username,
             email: email,
             password: hashedPassword,
-            createdAt: admin.firestore.FieldValue.serverTimestamp() // Timestamp dari Firestore
+            createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
+        console.timeEnd('Add User to Firestore');
 
-        const newUserDoc = await newUserRef.get(); // Dapatkan dokumen yang baru ditambahkan
-        const newUser = { id: newUserDoc.id, ...newUserDoc.data() }; // Sertakan ID dokumen
+        console.time('Get New User Doc');
+        const newUserDoc = await newUserRef.get();
+        console.timeEnd('Get New User Doc');
 
-        // Buat token JWT
-        const token = jwt.sign(
-            { id: newUser.id, username: newUser.username, email: newUser.email },
-            JWT_SECRET,
-            { expiresIn: '1h' }
-        );
+        // ... sisa kode JWT dan respons ...
 
-        res.status(201).json({
-            message: 'Registrasi berhasil',
-            user: {
-                id: newUser.id,
-                username: newUser.username,
-                email: newUser.email
-            },
-            token: token
-        });
     } catch (error) {
-        console.error('Error during registration:', error);
+        console.error('Error during registration (caught):', error);
         res.status(500).json({ message: 'Registrasi gagal', error: error.message });
     }
 });
-
 // --- Endpoint Login (POST /login) ---
 app.post('/login', async (req, res) => {
     const { email, password } = req.body;
