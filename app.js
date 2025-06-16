@@ -1,79 +1,41 @@
+// app.js
 require('dotenv').config();
 const express = require('express');
-const mongoose = require('mongoose'); // Import Mongoose
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const admin = require('firebase-admin'); // Import admin SDK
 
-const app = express();
-const port = process.env.PORT || 3000;
-
-// --- Koneksi MongoDB ---
-const MONGO_URI = process.env.MONGO_URI;
-
-if (!MONGO_URI) {
-    console.error('ERROR: MONGO_URI is not defined in .env or environment variables!');
-    // Hentikan aplikasi jika tidak ada URI, terutama penting untuk produksi
-    process.exit(1); 
+// --- Inisialisasi Firebase Admin SDK (Seperti di atas) ---
+let db;
+try {
+    if (process.env.NODE_ENV === 'production') {
+        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY);
+        admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    } else {
+        const serviceAccount = require('./serviceAccountKey.json');
+        admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    }
+    db = admin.firestore(); // Inisialisasi Firestore database instance
+    console.log('Firestore connected successfully!');
+} catch (error) {
+    console.error('ERROR: Failed to initialize Firebase:', error);
+    process.exit(1);
 }
 
-mongoose.connect(MONGO_URI)
-    .then(() => console.log('MongoDB connected successfully!'))
-    .catch(err => {
-        console.error('MongoDB connection error:', err);
-        // Penting: Keluar dari proses jika koneksi database gagal
-        process.exit(1); 
-    });
+const app = express();
+app.use(express.json());
 
-// --- Model User Mongoose ---
-const UserSchema = new mongoose.Schema({
-    username: {
-        type: String,
-        required: true,
-        unique: true,
-        trim: true,
-        minlength: 3
-    },
-    email: {
-        type: String,
-        required: true,
-        unique: true,
-        trim: true,
-        lowercase: true,
-        match: /^\S+@\S+\.\S+$/ // Regex sederhana untuk validasi email
-    },
-    password: {
-        type: String,
-        required: true,
-        minlength: 6 // Contoh: minimal panjang password
-    },
-    createdAt: {
-        type: Date,
-        default: Date.now
-    }
-});
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    console.error('ERROR: JWT_SECRET is not defined!');
+    process.exit(1);
+}
 
-// Middleware Mongoose: Hash password sebelum menyimpan
-UserSchema.pre('save', async function(next) {
-    if (!this.isModified('password')) {
-        return next();
-    }
-    const salt = await bcrypt.genSalt(10);
-    this.password = await bcrypt.hash(this.password, salt);
-    next();
-});
-
-const User = mongoose.model('User', UserSchema);
-
-// --- Pengaturan Middleware Express ---
-app.use(express.json()); // Middleware untuk parsing body JSON
-
-// --- JWT Secret Key (Pastikan ini sangat kuat dan disimpan di .env) ---
-const JWT_SECRET = process.env.JWT_SECRET; // Tidak perlu fallback karena kita akan exit jika tidak ada
-
-// --- Middleware Autentikasi JWT ---
+// --- Middleware Autentikasi JWT (Tetap sama) ---
 function authenticateToken(req, res, next) {
+    // ... (kode yang sama seperti sebelumnya) ...
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Format: Bearer TOKEN
+    const token = authHeader && authHeader.split(' ')[1];
 
     if (token == null) {
         return res.status(401).json({ message: 'Akses ditolak: Token tidak ditemukan' });
@@ -84,7 +46,7 @@ function authenticateToken(req, res, next) {
             console.error('JWT Verification Error:', err);
             return res.status(403).json({ message: 'Token tidak valid atau kadaluarsa' });
         }
-        req.user = user; // Menyimpan payload user dari token ke objek request
+        req.user = user;
         next();
     });
 }
@@ -99,29 +61,42 @@ app.post('/register', async (req, res) => {
 
     try {
         // Cek apakah email atau username sudah terdaftar
-        let userExists = await User.findOne({ email });
-        if (userExists) {
+        const usersRef = db.collection('users'); // Firestore collection reference
+        const emailSnapshot = await usersRef.where('email', '==', email).get();
+        if (!emailSnapshot.empty) {
             return res.status(409).json({ message: 'Email sudah terdaftar' });
         }
-        userExists = await User.findOne({ username });
-        if (userExists) {
+        const usernameSnapshot = await usersRef.where('username', '==', username).get();
+        if (!usernameSnapshot.empty) {
             return res.status(409).json({ message: 'Username sudah terdaftar' });
         }
 
-        // Buat user baru (password akan di-hash oleh middleware UserSchema.pre('save'))
-        const newUser = await User.create({ username, email, password });
+        // Hashing password
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
 
-        // Buat token JWT untuk pengguna baru yang terdaftar
+        // Buat user baru di Firestore
+        const newUserRef = await usersRef.add({ // .add() akan membuat ID dokumen otomatis
+            username: username,
+            email: email,
+            password: hashedPassword,
+            createdAt: admin.firestore.FieldValue.serverTimestamp() // Timestamp dari Firestore
+        });
+
+        const newUserDoc = await newUserRef.get(); // Dapatkan dokumen yang baru ditambahkan
+        const newUser = { id: newUserDoc.id, ...newUserDoc.data() }; // Sertakan ID dokumen
+
+        // Buat token JWT
         const token = jwt.sign(
-            { id: newUser._id, username: newUser.username, email: newUser.email },
+            { id: newUser.id, username: newUser.username, email: newUser.email },
             JWT_SECRET,
-            { expiresIn: '1h' } // Token berlaku selama 1 jam
+            { expiresIn: '1h' }
         );
 
         res.status(201).json({
             message: 'Registrasi berhasil',
             user: {
-                id: newUser._id, // Menggunakan _id dari MongoDB
+                id: newUser.id,
                 username: newUser.username,
                 email: newUser.email
             },
@@ -142,13 +117,17 @@ app.post('/login', async (req, res) => {
     }
 
     try {
-        // Cari pengguna berdasarkan email
-        const user = await User.findOne({ email });
-        if (!user) {
+        const usersRef = db.collection('users');
+        const snapshot = await usersRef.where('email', '==', email).get();
+
+        if (snapshot.empty) {
             return res.status(400).json({ message: 'Email atau password salah' });
         }
 
-        // Bandingkan password yang diinput dengan password yang di-hash
+        const userDoc = snapshot.docs[0]; // Dapatkan dokumen user
+        const user = { id: userDoc.id, ...userDoc.data() }; // Sertakan ID dokumen
+
+        // Bandingkan password
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             return res.status(400).json({ message: 'Email atau password salah' });
@@ -156,15 +135,15 @@ app.post('/login', async (req, res) => {
 
         // Buat token JWT
         const token = jwt.sign(
-            { id: user._id, username: user.username, email: user.email },
+            { id: user.id, username: user.username, email: user.email },
             JWT_SECRET,
-            { expiresIn: '1h' } // Token berlaku selama 1 jam
+            { expiresIn: '1h' }
         );
 
         res.status(200).json({
             message: 'Login berhasil',
             user: {
-                id: user._id,
+                id: user.id,
                 username: user.username,
                 email: user.email
             },
@@ -176,50 +155,23 @@ app.post('/login', async (req, res) => {
     }
 });
 
-// --- Endpoint Forgot Password (POST /forgot-password) ---
-// CATATAN: Implementasi sebenarnya akan melibatkan pengiriman email dengan tautan reset
-app.post('/forgot-password', async (req, res) => {
-    const { email } = req.body;
-
-    if (!email) {
-        return res.status(400).json({ message: 'Email harus diisi' });
-    }
-
-    try {
-        const user = await User.findOne({ email });
-
-        if (!user) {
-            // Penting: Untuk keamanan, selalu berikan pesan yang sama apakah email ditemukan atau tidak
-            return res.status(200).json({ message: 'Jika email terdaftar, tautan reset password akan dikirim.' });
-        }
-
-        console.log(`Mengirim email reset password ke: ${email}`);
-        // Di sini Anda akan mengintegrasikan layanan pengiriman email (mis. Nodemailer, SendGrid)
-        // dan membuat tautan reset unik yang mengarah ke halaman reset password di frontend Anda.
-        // Tautan ini akan berisi token yang sudah dienkripsi.
-
-        res.status(200).json({ message: 'Jika email terdaftar, tautan reset password akan dikirim.' });
-    } catch (error) {
-        console.error('Error during forgot password:', error);
-        res.status(500).json({ message: 'Terjadi kesalahan saat memproses permintaan.' });
-    }
-});
-
-// --- Endpoint Mendapatkan Data Username (GET /profile) ---
-// Endpoint ini memerlukan autentikasi JWT
+// --- Endpoint Profile (GET /profile) ---
 app.get('/profile', authenticateToken, async (req, res) => {
     try {
-        // Cari user berdasarkan ID dari token
-        const user = await User.findById(req.user.id).select('-password'); // Jangan kirim password
-        if (!user) {
+        const userId = req.user.id; // ID user dari token JWT
+
+        const userDoc = await db.collection('users').doc(userId).get();
+
+        if (!userDoc.exists) {
             return res.status(404).json({ message: 'Pengguna tidak ditemukan.' });
         }
 
-        // Data pengguna tersedia di req.user dari middleware authenticateToken
+        const user = { id: userDoc.id, ...userDoc.data() };
+
         res.status(200).json({
             message: 'Data profil berhasil diambil',
             user: {
-                id: user._id,
+                id: user.id,
                 username: user.username,
                 email: user.email
             }
@@ -230,20 +182,44 @@ app.get('/profile', authenticateToken, async (req, res) => {
     }
 });
 
-// --- Route Default untuk Vercel (penting untuk serverless) ---
-// Ini adalah "catch-all" route jika tidak ada route lain yang cocok
-app.get('/', (req, res) => {
-    res.status(200).json({ message: 'Selamat datang di API Autentikasi Express Anda dengan MongoDB!' });
+// --- Endpoint Forgot Password (POST /forgot-password) ---
+// Logika ini tetap sama karena tidak ada interaksi database langsung yang diubah
+app.post('/forgot-password', async (req, res) => {
+    const { email } = req.body;
+
+    if (!email) {
+        return res.status(400).json({ message: 'Email harus diisi' });
+    }
+
+    try {
+        const usersRef = db.collection('users');
+        const snapshot = await usersRef.where('email', '==', email).get();
+
+        if (snapshot.empty) {
+            return res.status(200).json({ message: 'Jika email terdaftar, tautan reset password akan dikirim.' });
+        }
+
+        console.log(`Mengirim email reset password ke: ${email}`);
+        res.status(200).json({ message: 'Jika email terdaftar, tautan reset password akan dikirim.' });
+    } catch (error) {
+        console.error('Error during forgot password:', error);
+        res.status(500).json({ message: 'Terjadi kesalahan saat memproses permintaan.' });
+    }
 });
 
+// --- Route Default ---
+app.get('/', (req, res) => {
+    res.status(200).json({ message: 'Selamat datang di API Autentikasi Express Anda dengan Firestore!' });
+});
 
-// --- Menjalankan Server Lokal (Hanya saat development) ---
+// --- Menjalankan Server Lokal ---
 if (process.env.NODE_ENV !== 'production') {
+    const port = process.env.PORT || 3000;
     app.listen(port, () => {
         console.log(`Server lokal berjalan di http://localhost:${port}`);
     });
 }
 
-// --- Ekspor Aplikasi untuk Vercel ---
-// Ini sangat penting agar Vercel dapat menggunakan aplikasi Express Anda sebagai Serverless Function
-module.exports = app;
+// --- Ekspor Aplikasi untuk Serverless (Netlify Functions) ---
+const serverless = require('serverless-http');
+module.exports.handler = serverless(app); // Mengubah export agar sesuai dengan Netlify Functions

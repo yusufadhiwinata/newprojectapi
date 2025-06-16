@@ -1,7 +1,7 @@
 # netlify.toml
 [build]
   command = "npm install"
-  publish = "." # UBAH INI: Arahkan ke root directory proyek Anda.
+  publish = "." # Pastikan ini ke root directory
 
 [functions]
   directory = "netlify/functions"
