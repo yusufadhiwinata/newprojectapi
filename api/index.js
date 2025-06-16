@@ -1,5 +1,4 @@
 const express = require("express");
-const serverless = require("serverless-http");
 const mongoose = require("mongoose");
 const cors = require("cors");
 require("dotenv").config();
@@ -8,19 +7,29 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Connect ke MongoDB Atlas
-mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log("✅ Connected to MongoDB"))
-  .catch(err => console.error("❌ MongoDB error:", err));
+// Debug log URI
+console.log("MONGODB_URI:", process.env.MONGODB_URI);
 
-// Skema user sederhana
+// Connect MongoDB
+mongoose.connect(process.env.MONGODB_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log("✅ MongoDB Connected"))
+.catch(err => console.error("❌ MongoDB Error:", err));
+
+// User schema
 const User = mongoose.model("User", new mongoose.Schema({
   username: String,
   email: String,
   password: String
 }));
 
-// Route registrasi
+// Routes
+app.get("/", (req, res) => {
+  res.send("✅ API is running!");
+});
+
 app.post("/api/register", async (req, res) => {
   const { username, email, password } = req.body;
   const user = new User({ username, email, password });
@@ -28,7 +37,6 @@ app.post("/api/register", async (req, res) => {
   res.json({ message: "User registered!" });
 });
 
-// Route login (sederhana, belum pakai JWT)
 app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email, password });
@@ -37,30 +45,9 @@ app.post("/api/login", async (req, res) => {
 });
 
 app.get("/api/user/:username", async (req, res) => {
-  const { username } = req.params;
-  const user = await User.findOne({ username });
-
-  if (!user) {
-    return res.status(404).json({ message: "User not found" });
-  }
-
-  // Tidak kirim password untuk alasan keamanan
-  res.json({
-    username: user.username,
-    email: user.email
-  });
+  const user = await User.findOne({ username: req.params.username });
+  if (!user) return res.status(404).json({ message: "User not found" });
+  res.json({ username: user.username, email: user.email });
 });
 
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-})
-.then(() => console.log("✅ Connected to MongoDB"))
-.catch(err => console.error("❌ MongoDB error:", err));
-
-console.log("MONGODB_URI:", process.env.MONGODB_URI);
-
-
-
 module.exports = app;
-module.exports.handler = serverless(app);
