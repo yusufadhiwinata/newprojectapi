@@ -1,11 +1,13 @@
 # netlify.toml
 [build]
   command = "npm install"
-  publish = "." # Pastikan ini ke root directory
+  publish = "."
 
 [functions]
-  directory = "netlify/functions"
+  directory = "netlify/functions" # Pastikan ini sesuai dengan struktur folder Anda
   node_bundler = "esbuild"
+  # Pastikan tidak ada konfigurasi 'timeout' yang salah di sini.
+  # Jika Anda sebelumnya mencoba menambah timeout dan mendapatkan error, hapus baris itu.
 
 [[redirects]]
   from = "/api/*"
