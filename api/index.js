@@ -58,6 +58,9 @@ mongoose.connect(process.env.MONGODB_URI, {
 .then(() => console.log("✅ Connected to MongoDB"))
 .catch(err => console.error("❌ MongoDB error:", err));
 
+console.log("MONGODB_URI:", process.env.MONGODB_URI);
+
+
 
 module.exports = app;
 module.exports.handler = serverless(app);
