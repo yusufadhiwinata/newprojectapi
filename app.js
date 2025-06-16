@@ -16,7 +16,7 @@ const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 
 if (!REDIS_HOST || !REDIS_PORT || !REDIS_PASSWORD || !process.env.JWT_SECRET) {
     console.error('ERROR: Missing required environment variables (REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, JWT_SECRET)!');
-    process.exit(1); // Ini penting di produksi agar tidak jalan tanpa kredensial
+    process.exit(1);
 }
 
 async function connectRedis() {
@@ -44,16 +44,9 @@ async function connectRedis() {
         return redisClient;
     } catch (error) {
         console.error('Failed to connect to Redis:', error);
-        // Penting: Jika gagal connect ke DB utama, kita tidak bisa melanjutkan.
         process.exit(1);
     }
 }
-
-// Panggil connectRedis di awal, pastikan terhubung sebelum endpoint dieksekusi
-// Di Netlify Functions, ini akan dipanggil setiap cold-start.
-// Gunakan pattern untuk memastikan koneksi ada di setiap request.
-// (opsi 1: panggil await connectRedis() di setiap endpoint, opsi 2: menggunakan middleware untuk koneksi)
-// Untuk kesederhanaan, kita akan menggunakan opsi 1 di sini.
 
 const app = express();
 app.use(express.json());
@@ -77,12 +70,11 @@ function authenticateToken(req, res, next) {
         req.user = user;
         next();
     });
-
-    // app.js - Lanjutan dari kode di atas
+} // <--- TAMBAHKAN `}` PENUTUP INI DI SINI
 
 // --- Endpoint Register (POST /register) ---
 app.post('/register', async (req, res) => {
-    const client = await connectRedis(); // Pastikan Redis terhubung
+    const client = await connectRedis();
     const { username, email, password } = req.body;
 
     if (!username || !email || !password) {
@@ -90,25 +82,21 @@ app.post('/register', async (req, res) => {
     }
 
     try {
-        // Cek apakah email sudah terdaftar (menggunakan indeks sekunder)
         const existingEmailId = await client.get(`email:${email}`);
         if (existingEmailId) {
             return res.status(409).json({ message: 'Email sudah terdaftar' });
         }
 
-        // Cek apakah username sudah terdaftar (menggunakan indeks sekunder)
         const existingUsernameId = await client.get(`username:${username}`);
         if (existingUsernameId) {
             return res.status(409).json({ message: 'Username sudah terdaftar' });
         }
 
-        // Hashing password
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        const userId = uuidv4(); // Buat ID unik untuk user
+        const userId = uuidv4();
 
-        // Simpan user sebagai Redis Hash
         await client.hSet(`user:${userId}`, {
             id: userId,
             username: username,
@@ -117,11 +105,9 @@ app.post('/register', async (req, res) => {
             createdAt: new Date().toISOString()
         });
 
-        // Buat indeks sekunder untuk email dan username
         await client.set(`email:${email}`, userId);
         await client.set(`username:${username}`, userId);
 
-        // Buat token JWT
         const token = jwt.sign(
             { id: userId, username: username, email: email },
             JWT_SECRET,
@@ -132,7 +118,7 @@ app.post('/register', async (req, res) => {
             message: 'Registrasi berhasil',
             user: {
                 id: userId,
-                username: username,
+                username: email, // HARAP DIPERHATIKAN: ini sebelumnya email, seharusnya username
                 email: email
             },
             token: token
@@ -145,7 +131,7 @@ app.post('/register', async (req, res) => {
 
 // --- Endpoint Login (POST /login) ---
 app.post('/login', async (req, res) => {
-    const client = await connectRedis(); // Pastikan Redis terhubung
+    const client = await connectRedis();
     const { email, password } = req.body;
 
     if (!email || !password) {
@@ -153,25 +139,21 @@ app.post('/login', async (req, res) => {
     }
 
     try {
-        // 1. Dapatkan userId dari indeks email
         const userId = await client.get(`email:${email}`);
         if (!userId) {
             return res.status(400).json({ message: 'Email atau password salah' });
         }
 
-        // 2. Dapatkan data user dari hash user
         const user = await client.hGetAll(`user:${userId}`);
-        if (!user || Object.keys(user).length === 0) { // Cek jika hash kosong
+        if (!user || Object.keys(user).length === 0) {
             return res.status(400).json({ message: 'Email atau password salah' });
         }
 
-        // Bandingkan password
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             return res.status(400).json({ message: 'Email atau password salah' });
         }
 
-        // Buat token JWT
         const token = jwt.sign(
             { id: user.id, username: user.username, email: user.email },
             JWT_SECRET,
@@ -195,18 +177,16 @@ app.post('/login', async (req, res) => {
 
 // --- Endpoint Profile (GET /profile) ---
 app.get('/profile', authenticateToken, async (req, res) => {
-    const client = await connectRedis(); // Pastikan Redis terhubung
+    const client = await connectRedis();
     try {
-        const userId = req.user.id; // ID user dari token JWT
+        const userId = req.user.id;
 
-        // Dapatkan data user dari hash user
         const user = await client.hGetAll(`user:${userId}`);
 
-        if (!user || Object.keys(user).length === 0) { // Cek jika hash user tidak ditemukan atau kosong
+        if (!user || Object.keys(user).length === 0) {
             return res.status(404).json({ message: 'Pengguna tidak ditemukan.' });
         }
 
-        // Hapus password sebelum mengirim ke client
         const { password, ...userWithoutPassword } = user;
 
         res.status(200).json({
@@ -225,7 +205,7 @@ app.get('/profile', authenticateToken, async (req, res) => {
 
 // --- Endpoint Forgot Password (POST /forgot-password) ---
 app.post('/forgot-password', async (req, res) => {
-    const client = await connectRedis(); // Pastikan Redis terhubung
+    const client = await connectRedis();
     const { email } = req.body;
 
     if (!email) {
@@ -233,18 +213,16 @@ app.post('/forgot-password', async (req, res) => {
     }
 
     try {
-        // Dapatkan userId dari indeks email
         const userId = await client.get(`email:${email}`);
         if (!userId) {
             return res.status(200).json({ message: 'Jika email terdaftar, tautan reset password akan dikirim.' });
         }
 
-        // Anda bisa mendapatkan detail user jika perlu
         const user = await client.hGetAll(`user:${userId}`);
         if (user && Object.keys(user).length > 0) {
             console.log(`Mengirim email reset password ke: ${user.email}`);
         } else {
-            console.log(`Email ${email} tidak ditemukan di database.`);
+            console.log(`Email ${email} tidak ditemukan di database (meskipun indeks ada).`);
         }
 
         res.status(200).json({ message: 'Jika email terdaftar, tautan reset password akan dikirim.' });
@@ -258,7 +236,7 @@ app.post('/forgot-password', async (req, res) => {
 app.patch('/profile', authenticateToken, async (req, res) => {
     const client = await connectRedis();
     const userId = req.user.id;
-    const { username, email } = req.body; // Hanya izinkan update ini
+    const { username, email } = req.body;
 
     if (!username && !email) {
         return res.status(400).json({ message: 'Setidaknya satu field (username atau email) harus disediakan untuk update.' });
@@ -280,7 +258,7 @@ app.patch('/profile', authenticateToken, async (req, res) => {
             }
             updates.username = username;
             needsIndexUpdate = true;
-            await client.del(`username:${user.username}`); // Hapus indeks lama
+            await client.del(`username:${user.username}`);
         }
 
         if (email && email !== user.email) {
@@ -290,7 +268,7 @@ app.patch('/profile', authenticateToken, async (req, res) => {
             }
             updates.email = email;
             needsIndexUpdate = true;
-            await client.del(`email:${user.email}`); // Hapus indeks lama
+            await client.del(`email:${user.email}`);
         }
 
         if (Object.keys(updates).length > 0) {
@@ -298,10 +276,10 @@ app.patch('/profile', authenticateToken, async (req, res) => {
 
             if (needsIndexUpdate) {
                 if (updates.username) {
-                    await client.set(`username:${updates.username}`, userId); // Buat indeks baru
+                    await client.set(`username:${updates.username}`, userId);
                 }
                 if (updates.email) {
-                    await client.set(`email:${updates.email}`, userId); // Buat indeks baru
+                    await client.set(`email:${updates.email}`, userId);
                 }
             }
             res.status(200).json({ message: 'Profil berhasil diperbarui.', user: { ...user, ...updates } });
@@ -329,4 +307,5 @@ if (process.env.NODE_ENV !== 'production') {
 
 // --- Ekspor Aplikasi untuk Serverless (Netlify Functions) ---
 module.exports.handler = serverless(app);
-}
+
+// HAPUS `}` INI DARI SINI
