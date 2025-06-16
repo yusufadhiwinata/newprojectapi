@@ -36,5 +36,20 @@ app.post("/api/login", async (req, res) => {
   res.json({ message: "Login success", user });
 });
 
+app.get("/api/user/:username", async (req, res) => {
+  const { username } = req.params;
+  const user = await User.findOne({ username });
+
+  if (!user) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  // Tidak kirim password untuk alasan keamanan
+  res.json({
+    username: user.username,
+    email: user.email
+  });
+});
+
 module.exports = app;
 module.exports.handler = serverless(app);
