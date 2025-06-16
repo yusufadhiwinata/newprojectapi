@@ -1,59 +1,67 @@
-// app.js
+// netlify/functions/api.js
 require('dotenv').config();
 const express = require('express');
+const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const redis = require('redis');
 const serverless = require('serverless-http');
-const { v4: uuidv4 } = require('uuid'); // Untuk membuat ID unik
-
-// --- Inisialisasi Klien Redis ---
-let redisClient;
-
-const REDIS_HOST = process.env.REDIS_HOST;
-const REDIS_PORT = process.env.REDIS_PORT;
-const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
-
-if (!REDIS_HOST || !REDIS_PORT || !REDIS_PASSWORD || !process.env.JWT_SECRET) {
-    console.error('ERROR: Missing required environment variables (REDIS_HOST, REDIS_PORT, REDIS_PASSWORD, JWT_SECRET)!');
-    process.exit(1);
-}
-
-async function connectRedis() {
-    if (redisClient && redisClient.isReady) {
-        console.log('Redis client already connected.');
-        return redisClient;
-    }
-
-    try {
-        redisClient = redis.createClient({
-            password: REDIS_PASSWORD,
-            socket: {
-                host: REDIS_HOST,
-                port: REDIS_PORT
-            }
-        });
-
-        redisClient.on('error', (err) => console.error('Redis Client Error', err));
-        redisClient.on('connect', () => console.log('Redis client connecting...'));
-        redisClient.on('ready', () => console.log('Redis client ready!'));
-        redisClient.on('end', () => console.log('Redis client connection closed.'));
-
-        await redisClient.connect();
-        console.log('Redis connected successfully!');
-        return redisClient;
-    } catch (error) {
-        console.error('Failed to connect to Redis:', error);
-        process.exit(1);
-    }
-}
 
 const app = express();
 app.use(express.json());
 
+// --- Variabel Lingkungan ---
+const MONGODB_URI = process.env.MONGODB_URI;
 const JWT_SECRET = process.env.JWT_SECRET;
 
-// --- Middleware Autentikasi JWT (Tetap sama) ---
+// Validasi variabel lingkungan
+if (!MONGODB_URI || !JWT_SECRET) {
+    console.error('ERROR: Missing required environment variables (MONGODB_URI, JWT_SECRET)!');
+    // Di lingkungan produksi, ini akan menghentikan cold start fungsi
+    // Untuk pengembangan lokal, kita mungkin ingin menghentikan proses
+    if (process.env.NODE_ENV !== 'production') {
+        process.exit(1);
+    }
+}
+
+// --- Koneksi MongoDB ---
+let conn = null; // Gunakan variabel ini untuk menyimpan koneksi
+const MONGO_OPTIONS = {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 5000, // Timeout setelah 5s jika tidak dapat menemukan server
+    socketTimeoutMS: 45000, // Tutup koneksi setelah 45s tidak aktif
+};
+
+// Fungsi untuk menghubungkan ke MongoDB (akan dipanggil di setiap request jika conn null)
+async function connectToDatabase() {
+    if (conn) {
+        console.log('Using existing database connection.');
+        return conn;
+    }
+
+    try {
+        console.log('Connecting to database...');
+        conn = await mongoose.connect(MONGODB_URI, MONGO_OPTIONS);
+        console.log('Database connected successfully!');
+        return conn;
+    } catch (error) {
+        console.error('Database connection failed:', error);
+        conn = null; // Pastikan conn direset jika gagal
+        throw new Error('Failed to connect to database.'); // Lempar error untuk ditangkap di handler
+    }
+}
+
+// --- Skema Mongoose (User Model) ---
+const userSchema = new mongoose.Schema({
+    username: { type: String, required: true, unique: true },
+    email: { type: String, required: true, unique: true },
+    password: { type: String, required: true },
+    createdAt: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model('User', userSchema);
+
+// --- Middleware Autentikasi JWT ---
 function authenticateToken(req, res, next) {
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
@@ -70,46 +78,47 @@ function authenticateToken(req, res, next) {
         req.user = user;
         next();
     });
-} // <--- TAMBAHKAN `}` PENUTUP INI DI SINI
+}
 
-// --- Endpoint Register (POST /register) ---
+// --- Routes ---
+
+// Route Default
+app.get('/', (req, res) => {
+    res.status(200).json({ message: 'Selamat datang di API Autentikasi Express Anda dengan MongoDB!' });
+});
+
+// Register User
 app.post('/register', async (req, res) => {
-    const client = await connectRedis();
-    const { username, email, password } = req.body;
-
-    if (!username || !email || !password) {
-        return res.status(400).json({ message: 'Semua field (username, email, password) harus diisi' });
-    }
-
     try {
-        const existingEmailId = await client.get(`email:${email}`);
-        if (existingEmailId) {
-            return res.status(409).json({ message: 'Email sudah terdaftar' });
+        await connectToDatabase(); // Pastikan terhubung ke DB
+
+        const { username, email, password } = req.body;
+
+        if (!username || !email || !password) {
+            return res.status(400).json({ message: 'Semua field (username, email, password) harus diisi' });
         }
 
-        const existingUsernameId = await client.get(`username:${username}`);
-        if (existingUsernameId) {
-            return res.status(409).json({ message: 'Username sudah terdaftar' });
+        // Cek jika user sudah ada
+        const existingUser = await User.findOne({ $or: [{ email }, { username }] });
+        if (existingUser) {
+            return res.status(409).json({ message: 'Email atau username sudah terdaftar' });
         }
 
+        // Hash password
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
-        const userId = uuidv4();
-
-        await client.hSet(`user:${userId}`, {
-            id: userId,
-            username: username,
-            email: email,
-            password: hashedPassword,
-            createdAt: new Date().toISOString()
+        const newUser = new User({
+            username,
+            email,
+            password: hashedPassword
         });
 
-        await client.set(`email:${email}`, userId);
-        await client.set(`username:${username}`, userId);
+        await newUser.save();
 
+        // Buat token JWT
         const token = jwt.sign(
-            { id: userId, username: username, email: email },
+            { id: newUser._id, username: newUser.username, email: newUser.email },
             JWT_SECRET,
             { expiresIn: '1h' }
         );
@@ -117,9 +126,9 @@ app.post('/register', async (req, res) => {
         res.status(201).json({
             message: 'Registrasi berhasil',
             user: {
-                id: userId,
-                username: email, // HARAP DIPERHATIKAN: ini sebelumnya email, seharusnya username
-                email: email
+                id: newUser._id,
+                username: newUser.username,
+                email: newUser.email
             },
             token: token
         });
@@ -129,33 +138,32 @@ app.post('/register', async (req, res) => {
     }
 });
 
-// --- Endpoint Login (POST /login) ---
+// Login User
 app.post('/login', async (req, res) => {
-    const client = await connectRedis();
-    const { email, password } = req.body;
-
-    if (!email || !password) {
-        return res.status(400).json({ message: 'Email dan password harus diisi' });
-    }
-
     try {
-        const userId = await client.get(`email:${email}`);
-        if (!userId) {
+        await connectToDatabase(); // Pastikan terhubung ke DB
+
+        const { email, password } = req.body;
+
+        if (!email || !password) {
+            return res.status(400).json({ message: 'Email dan password harus diisi' });
+        }
+
+        // Cari user berdasarkan email
+        const user = await User.findOne({ email });
+        if (!user) {
             return res.status(400).json({ message: 'Email atau password salah' });
         }
 
-        const user = await client.hGetAll(`user:${userId}`);
-        if (!user || Object.keys(user).length === 0) {
-            return res.status(400).json({ message: 'Email atau password salah' });
-        }
-
+        // Bandingkan password
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
             return res.status(400).json({ message: 'Email atau password salah' });
         }
 
+        // Buat token JWT
         const token = jwt.sign(
-            { id: user.id, username: user.username, email: user.email },
+            { id: user._id, username: user.username, email: user.email },
             JWT_SECRET,
             { expiresIn: '1h' }
         );
@@ -163,7 +171,7 @@ app.post('/login', async (req, res) => {
         res.status(200).json({
             message: 'Login berhasil',
             user: {
-                id: user.id,
+                id: user._id,
                 username: user.username,
                 email: user.email
             },
@@ -175,26 +183,27 @@ app.post('/login', async (req, res) => {
     }
 });
 
-// --- Endpoint Profile (GET /profile) ---
+// Get User Profile (Protected Route)
 app.get('/profile', authenticateToken, async (req, res) => {
-    const client = await connectRedis();
     try {
+        await connectToDatabase(); // Pastikan terhubung ke DB
+
+        // ID user diambil dari token JWT yang sudah diverifikasi oleh middleware
         const userId = req.user.id;
 
-        const user = await client.hGetAll(`user:${userId}`);
+        const user = await User.findById(userId).select('-password'); // Jangan kirim password
 
-        if (!user || Object.keys(user).length === 0) {
+        if (!user) {
             return res.status(404).json({ message: 'Pengguna tidak ditemukan.' });
         }
-
-        const { password, ...userWithoutPassword } = user;
 
         res.status(200).json({
             message: 'Data profil berhasil diambil',
             user: {
-                id: userWithoutPassword.id,
-                username: userWithoutPassword.username,
-                email: userWithoutPassword.email
+                id: user._id,
+                username: user.username,
+                email: user.email,
+                createdAt: user.createdAt
             }
         });
     } catch (error) {
@@ -203,109 +212,19 @@ app.get('/profile', authenticateToken, async (req, res) => {
     }
 });
 
-// --- Endpoint Forgot Password (POST /forgot-password) ---
-app.post('/forgot-password', async (req, res) => {
-    const client = await connectRedis();
-    const { email } = req.body;
-
-    if (!email) {
-        return res.status(400).json({ message: 'Email harus diisi' });
-    }
-
-    try {
-        const userId = await client.get(`email:${email}`);
-        if (!userId) {
-            return res.status(200).json({ message: 'Jika email terdaftar, tautan reset password akan dikirim.' });
-        }
-
-        const user = await client.hGetAll(`user:${userId}`);
-        if (user && Object.keys(user).length > 0) {
-            console.log(`Mengirim email reset password ke: ${user.email}`);
-        } else {
-            console.log(`Email ${email} tidak ditemukan di database (meskipun indeks ada).`);
-        }
-
-        res.status(200).json({ message: 'Jika email terdaftar, tautan reset password akan dikirim.' });
-    } catch (error) {
-        console.error('Error during forgot password:', error);
-        res.status(500).json({ message: 'Terjadi kesalahan saat memproses permintaan.' });
-    }
-});
-
-// --- Endpoint Contoh Update Profile (PATCH /profile) ---
-app.patch('/profile', authenticateToken, async (req, res) => {
-    const client = await connectRedis();
-    const userId = req.user.id;
-    const { username, email } = req.body;
-
-    if (!username && !email) {
-        return res.status(400).json({ message: 'Setidaknya satu field (username atau email) harus disediakan untuk update.' });
-    }
-
-    try {
-        const user = await client.hGetAll(`user:${userId}`);
-        if (!user || Object.keys(user).length === 0) {
-            return res.status(404).json({ message: 'Pengguna tidak ditemukan.' });
-        }
-
-        const updates = {};
-        let needsIndexUpdate = false;
-
-        if (username && username !== user.username) {
-            const existingUsernameId = await client.get(`username:${username}`);
-            if (existingUsernameId) {
-                return res.status(409).json({ message: 'Username baru sudah terdaftar.' });
-            }
-            updates.username = username;
-            needsIndexUpdate = true;
-            await client.del(`username:${user.username}`);
-        }
-
-        if (email && email !== user.email) {
-            const existingEmailId = await client.get(`email:${email}`);
-            if (existingEmailId) {
-                return res.status(409).json({ message: 'Email baru sudah terdaftar.' });
-            }
-            updates.email = email;
-            needsIndexUpdate = true;
-            await client.del(`email:${user.email}`);
-        }
-
-        if (Object.keys(updates).length > 0) {
-            await client.hSet(`user:${userId}`, updates);
-
-            if (needsIndexUpdate) {
-                if (updates.username) {
-                    await client.set(`username:${updates.username}`, userId);
-                }
-                if (updates.email) {
-                    await client.set(`email:${updates.email}`, userId);
-                }
-            }
-            res.status(200).json({ message: 'Profil berhasil diperbarui.', user: { ...user, ...updates } });
-        } else {
-            res.status(200).json({ message: 'Tidak ada perubahan yang diminta.' });
-        }
-    } catch (error) {
-        console.error('Error updating profile:', error);
-        res.status(500).json({ message: 'Gagal memperbarui profil.', error: error.message });
-    }
-});
-
-// --- Route Default ---
-app.get('/', (req, res) => {
-    res.status(200).json({ message: 'Selamat datang di API Autentikasi Express Anda dengan Redis sebagai Database Utama!' });
-});
-
-// --- Menjalankan Server Lokal ---
+// --- Menjalankan Server Lokal (untuk pengembangan) ---
+// Jika NODE_ENV bukan 'production', jalankan server Express biasa
 if (process.env.NODE_ENV !== 'production') {
     const port = process.env.PORT || 3000;
     app.listen(port, () => {
         console.log(`Server lokal berjalan di http://localhost:${port}`);
+        connectToDatabase().catch(err => {
+            console.error("Gagal terhubung ke database saat startup lokal:", err);
+            process.exit(1);
+        });
     });
 }
 
-// --- Ekspor Aplikasi untuk Serverless (Netlify Functions) ---
+// --- Ekspor Aplikasi untuk Netlify Functions ---
+// Ini adalah entry point untuk serverless
 module.exports.handler = serverless(app);
-
-// HAPUS `}` INI DARI SINI

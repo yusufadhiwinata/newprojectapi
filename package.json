@@ -23,6 +23,7 @@
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.17.0",
+    "mongoose": "^8.15.2",
     "redis": "^5.5.6",
     "serverless-http": "^3.2.0",
     "uuid": "^11.1.0"
@@ -30,8 +31,16 @@
   "devDependencies": {
     "nodemon": "^3.1.10"
   },
-  "description": "",
   "engines": {
     "node": "20.x"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yusufadhiwinata/newprojectapi.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yusufadhiwinata/newprojectapi/issues"
+  },
+  "homepage": "https://github.com/yusufadhiwinata/newprojectapi#readme",
+  "description": ""
 }
